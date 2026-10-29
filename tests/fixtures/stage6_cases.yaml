@@ -1,0 +1,55 @@
+﻿version: 1
+scope: single_turn
+cases:
+  - id: case_1_region_metrics_january_2025
+    query: 查询 2025 年 1 月各大区的订单实付金额和商品购买数量，按实付金额降序
+    expected_status: success
+    expected_metrics: [paid_amount, product_quantity]
+    expected_dimensions: [region_name]
+    expected_time: {year: 2025, month: 1}
+    expected_order: [{field: paid_amount, direction: desc}]
+    expected_rows:
+      - {region_name: 华东, paid_amount: 54924.0, product_quantity: 50}
+      - {region_name: 华南, paid_amount: 28096.5, product_quantity: 56}
+      - {region_name: 华中, paid_amount: 11397.0, product_quantity: 5}
+      - {region_name: 西南, paid_amount: 10592.0, product_quantity: 25}
+      - {region_name: 华北, paid_amount: 4021.0, product_quantity: 13}
+  - id: metric_paid_amount
+    query: 查询 2025 年 1 月的订单实付金额
+    expected_status: success
+    expected_metrics: [paid_amount]
+  - id: metric_product_quantity
+    query: 查询 2025 年 1 月的商品购买数量
+    expected_status: success
+    expected_metrics: [product_quantity]
+  - id: metric_order_count
+    query: 查询 2025 年 1 月的订单数
+    expected_status: success
+    expected_metrics: [order_count]
+  - id: metric_average_quantity_per_order
+    query: 查询 2025 年 1 月的平均每单购买件数
+    expected_status: success
+    expected_metrics: [average_quantity_per_order]
+  - id: alias_aov
+    query: 查询 2025 年 1 月的 AOV
+    expected_status: success
+    expected_metrics: [average_quantity_per_order]
+  - id: reject_gmv
+    query: 查询 2025 年 1 月的 GMV
+    expected_status: needs_clarification
+  - id: clarify_month_without_year
+    query: 查询 1 月各大区的订单数
+    expected_status: needs_clarification
+  - id: unsupported_time
+    query: 查询去年同期各大区的订单数
+    expected_status: unsupported
+  - id: empty_success
+    query: 查询 2099 年 1 月的订单数
+    expected_status: success
+    expected_empty_rows: true
+  - id: case_2_multiturn
+    query: 案例二多轮查询
+    expected_status: not_implemented
+  - id: case_3_multiturn
+    query: 案例三多轮查询
+    expected_status: not_implemented

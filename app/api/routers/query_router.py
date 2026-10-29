@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+﻿from fastapi import APIRouter
 from fastapi.params import Depends
 from starlette.responses import StreamingResponse
 
@@ -14,5 +14,11 @@ async def query(
     query: QuerySchema, query_service: QueryService = Depends(get_query_service)
 ):
     return StreamingResponse(
-        query_service.query(query.query), media_type="text/event-stream"
+        query_service.query(query.query),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
     )

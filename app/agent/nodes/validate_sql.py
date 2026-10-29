@@ -1,24 +1,25 @@
-from langgraph.runtime import Runtime
+﻿from langgraph.runtime import Runtime
 
 from app.agent.context import DataAgentContext
 from app.agent.state import DataAgentState
 from app.core.log import logger
+from app.security.sqlglot_validator import SQLSecurityError, validate_compiled_query
 
 
 async def validate_sql(state: DataAgentState, runtime: Runtime[DataAgentContext]):
+    """Run the independent SQLGlot allowlist check before exposing or executing SQL."""
     writer = runtime.stream_writer
     writer({"type": "progress", "step": "验证SQL", "status": "running"})
-
-    dw_mysql_repository = runtime.context["dw_mysql_repository"]
-
-    sql = state["sql"]
-
+    compiled = state.get("compiled_query")
     try:
-        await dw_mysql_repository.validate_sql(sql)
+        if compiled is None:
+            raise SQLSecurityError("missing compiled SQL")
+        validate_compiled_query(compiled)
         writer({"type": "progress", "step": "验证SQL", "status": "success"})
-        logger.info(f"SQL验证成功: {sql}")
+        writer({"type": "sql", "sql": compiled.sql})
+        logger.info("SQL AST validation succeeded")
         return {"error": None}
-    except Exception as e:
+    except SQLSecurityError as exc:
         writer({"type": "progress", "step": "验证SQL", "status": "error"})
-        logger.error(f"SQL验证失败: {sql}")
-        return {"error": str(e)}
+        logger.error("SQL validation failed: %s", exc)
+        return {"error": "SQL_SECURITY_VALIDATION_FAILED"}

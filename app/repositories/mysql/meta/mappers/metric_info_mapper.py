@@ -12,7 +12,13 @@ class MetricInfoMapper:
             name=model.name,
             description=model.description,
             relevant_columns=model.relevant_columns,
-            alias=model.alias
+            alias=model.alias,
+            metric_type=model.metric_type,
+            expression=model.expression,
+            numerator=model.numerator,
+            denominator=model.denominator,
+            base_dataset=model.base_dataset,
+            status=model.status or "active",
         )
 
     @staticmethod

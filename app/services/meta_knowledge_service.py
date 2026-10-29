@@ -2,14 +2,15 @@ import uuid
 from pathlib import Path
 
 from langchain_huggingface import HuggingFaceEndpointEmbeddings
-from omegaconf import OmegaConf
-
-from app.conf.meta_config import MetaConfig
+from app.conf.meta_config import MetaConfig, load_meta_config
 from app.core.log import logger
 from app.entities.column_info import ColumnInfo
 from app.entities.column_metric import ColumnMetric
+from app.entities.dataset_info import DatasetInfo
 from app.entities.metric_info import MetricInfo
+from app.entities.relationship_info import RelationshipInfo
 from app.entities.table_info import TableInfo
+from app.entities.time_dimension_info import TimeDimensionInfo
 from app.entities.value_info import ValueInfo
 from app.repositories.es.value_es_repository import ValueESRepository
 from app.repositories.mysql.dw.dw_mysql_repository import DWMySQLRepository
@@ -160,18 +161,23 @@ class MetaKnowledgeService:
         for metric in meta_config.metrics:
             # 构造MetricInfo数据
             metric_info = MetricInfo(
-                id=metric.name,
+                id=metric.id,
                 name=metric.name,
                 description=metric.description,
                 relevant_columns=metric.relevant_columns,
                 alias=metric.alias,
+                metric_type=metric.type,
+                expression=metric.expression,
+                numerator=metric.numerator,
+                denominator=metric.denominator,
+                base_dataset=metric.base_dataset,
             )
             metric_infos.append(metric_info)
 
             for relevant_column in metric.relevant_columns:
                 # 构造ColumnMetric数据
                 column_metric = ColumnMetric(
-                    column_id=relevant_column, metric_id=metric.name
+                    column_id=relevant_column, metric_id=metric.id
                 )
                 column_metrics.append(column_metric)
         # 保存到元数据数据库
@@ -180,6 +186,46 @@ class MetaKnowledgeService:
             await self.meta_mysql_repository.save_column_metrics(column_metrics)
 
         return metric_infos
+
+    async def _save_semantic_objects_to_meta_db(self, meta_config: MetaConfig):
+        datasets = [
+            DatasetInfo(
+                id=dataset.id,
+                table_name=dataset.table,
+                grain=dataset.grain,
+                primary_key=dataset.primary_key,
+                time_dimension_id=dataset.time_dimension,
+            )
+            for dataset in meta_config.datasets
+        ]
+        relationships = [
+            RelationshipInfo(
+                id=relationship.id,
+                source=relationship.source,
+                target=relationship.target,
+                cardinality=relationship.cardinality,
+                enabled=relationship.enabled,
+            )
+            for relationship in meta_config.relationships
+        ]
+        time_dimensions = [
+            TimeDimensionInfo(
+                id=time_dimension.id,
+                table_name=time_dimension.table,
+                year_field=time_dimension.year_field,
+                quarter_field=time_dimension.quarter_field,
+                month_field=time_dimension.month_field,
+                day_field=time_dimension.day_field,
+                date_key_field=time_dimension.date_key_field,
+                supported_grains=time_dimension.supported_grains,
+                month_filter_requires_year=time_dimension.month_filter_requires_year,
+            )
+            for time_dimension in meta_config.time_dimensions
+        ]
+        async with self.meta_mysql_repository.session.begin():
+            await self.meta_mysql_repository.save_datasets(datasets)
+            await self.meta_mysql_repository.save_relationships(relationships)
+            await self.meta_mysql_repository.save_time_dimensions(time_dimensions)
 
     async def _save_metric_info_to_qdrant(self, metric_infos: list[MetricInfo]):
         # 确保collection存在
@@ -223,10 +269,8 @@ class MetaKnowledgeService:
         await self.metric_qdrant_repository.upsert(ids, embeddings, payloads)
 
     async def build(self, config_path: Path):
-        # 1.加载配置文件
-        context = OmegaConf.load(config_path)
-        schema = OmegaConf.structured(MetaConfig)
-        meta_config: MetaConfig = OmegaConf.to_object(OmegaConf.merge(schema, context))
+        meta_config = load_meta_config(config_path)
+        await meta_config.validate_against_dw(self.dw_mysql_repository)
         logger.info("加载配置文件")
         # 2.处理表信息
         if meta_config.tables:
@@ -241,6 +285,9 @@ class MetaKnowledgeService:
             # 2.3 为字段取值建立全文索引
             await self._save_value_info_to_es(meta_config, column_infos)
             logger.info("为字段取值建立全文索引")
+
+        await self._save_semantic_objects_to_meta_db(meta_config)
+        logger.info("保存数据集、关系和时间维度元数据")
 
         # 3.处理指标信息
         if meta_config.metrics:

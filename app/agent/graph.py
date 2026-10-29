@@ -5,18 +5,22 @@ from langgraph.graph import StateGraph
 
 from app.agent.context import DataAgentContext
 from app.agent.nodes.add_extra_context import add_extra_context
-from app.agent.nodes.correct_sql import correct_sql
 from app.agent.nodes.execute_sql import execute_sql
 from app.agent.nodes.extract_keywords import extract_keywords
 from app.agent.nodes.filter_metric import filter_metric
 from app.agent.nodes.filter_table import filter_table
 from app.agent.nodes.generate_sql import generate_sql
 from app.agent.nodes.merge_retrieved_info import merge_retrieved_info
+from app.agent.nodes.intent_terminal import intent_terminal
+from app.agent.nodes.parse_intent import parse_intent
+from app.agent.nodes.plan_query import plan_query
 from app.agent.nodes.recall_column import recall_column
 from app.agent.nodes.recall_metric import recall_metric
 from app.agent.nodes.recall_value import recall_value
 from app.agent.nodes.validate_sql import validate_sql
+from app.agent.nodes.resolve_time import resolve_time
 from app.agent.state import DataAgentState
+from app.intent.models import QueryIntentStatus
 from app.clients.embedding_client_manager import embedding_client_manager
 from app.clients.es_client_manager import es_client_manager
 from app.clients.mysql_client_manager import meta_mysql_client_manager, dw_mysql_client_manager
@@ -30,6 +34,10 @@ from app.repositories.qdrant.metric_qdrant_repository import MetricQdrantReposit
 graph_builder = StateGraph(state_schema=DataAgentState, context_schema=DataAgentContext)
 
 # 添加节点
+graph_builder.add_node("parse_intent", parse_intent)
+graph_builder.add_node("resolve_time", resolve_time)
+graph_builder.add_node("plan_query", plan_query)
+graph_builder.add_node("intent_terminal", intent_terminal)
 graph_builder.add_node("extract_keywords", extract_keywords)
 graph_builder.add_node("recall_column", recall_column)
 graph_builder.add_node("recall_value", recall_value)
@@ -40,11 +48,21 @@ graph_builder.add_node("filter_table", filter_table)
 graph_builder.add_node("add_extra_context", add_extra_context)
 graph_builder.add_node("generate_sql", generate_sql)
 graph_builder.add_node("validate_sql", validate_sql)
-graph_builder.add_node("correct_sql", correct_sql)
 graph_builder.add_node("execute_sql", execute_sql)
 
 # 添加关系
-graph_builder.add_edge(START, "extract_keywords")
+graph_builder.add_edge(START, "parse_intent")
+graph_builder.add_edge("parse_intent", "resolve_time")
+graph_builder.add_conditional_edges(
+    "resolve_time",
+    lambda state: "plan_query" if state["query_intent"].status == QueryIntentStatus.READY else "intent_terminal",
+    {"plan_query": "plan_query", "intent_terminal": "intent_terminal"},
+)
+graph_builder.add_conditional_edges(
+    "plan_query",
+    lambda state: "generate_sql" if state["query_intent"].status == QueryIntentStatus.READY else "intent_terminal",
+    {"generate_sql": "generate_sql", "intent_terminal": "intent_terminal"},
+)
 graph_builder.add_edge("extract_keywords", "recall_column")
 graph_builder.add_edge("extract_keywords", "recall_value")
 graph_builder.add_edge("extract_keywords", "recall_metric")
@@ -58,12 +76,13 @@ graph_builder.add_edge("filter_metric", "add_extra_context")
 graph_builder.add_edge("add_extra_context", "generate_sql")
 graph_builder.add_edge("generate_sql", "validate_sql")
 
-graph_builder.add_conditional_edges("validate_sql",
-                                    lambda state: "execute_sql" if state["error"] is None else "correct_sql",
-                                    {"execute_sql": "execute_sql", "correct_sql": "correct_sql"})
-
-graph_builder.add_edge("correct_sql", "execute_sql")
+graph_builder.add_conditional_edges(
+    "validate_sql",
+    lambda state: "execute_sql" if state["error"] is None else "intent_terminal",
+    {"execute_sql": "execute_sql", "intent_terminal": "intent_terminal"},
+)
 graph_builder.add_edge("execute_sql", END)
+graph_builder.add_edge("intent_terminal", END)
 
 graph = graph_builder.compile()
 

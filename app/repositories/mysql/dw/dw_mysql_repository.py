@@ -1,5 +1,9 @@
+import asyncio
+
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.security.query_limits import QueryResult
 
 
 class DWMySQLRepository:
@@ -9,7 +13,6 @@ class DWMySQLRepository:
     async def get_column_types(self, table_name: str) -> dict[str, str]:
         sql = f"show columns from {table_name}"
         result = await self.session.execute(text(sql))
-        # 字典推导式comprehension创建字典，快捷键：compd
         return {row.Field: row.Type for row in result.fetchall()}
 
     async def get_column_values(self, table_name: str, column_name: str, limit: int):
@@ -19,16 +22,32 @@ class DWMySQLRepository:
 
     async def get_db_info(self):
         result = await self.session.execute(text("select version()"))
-        # 返回的只有一个值，那么就直接使用scalar()返回即可
         version = result.scalar()
-
         dialect = self.session.get_bind().dialect.name
+        return {"version": version, "dialect": dialect}
 
-        return {'version': version, 'dialect': dialect}
+    async def validate_sql(self, sql, params=None):
+        await self.session.execute(text(f"EXPLAIN {sql}"), params or {})
 
-    async def validate_sql(self, sql):
-        await self.session.execute(text(f"explain {sql}"))
+    async def execute_sql(
+        self,
+        sql: str,
+        params: dict | None = None,
+        *,
+        max_rows: int = 100,
+        timeout_seconds: float = 10.0,
+    ) -> QueryResult:
+        async def run_query():
+            result = await self.session.execute(text(sql), params or {})
+            rows = [dict(row) for row in result.mappings().fetchmany(max_rows + 1)]
+            truncated = len(rows) > max_rows
+            if truncated:
+                rows = rows[:max_rows]
+            return QueryResult(
+                rows=rows,
+                truncated=truncated,
+                row_count=len(rows),
+                max_rows=max_rows,
+            )
 
-    async def execute_sql(self, sql):
-        result = await self.session.execute(text(sql))
-        return [dict(row) for row in result.mappings().fetchall()]
+        return await asyncio.wait_for(run_query(), timeout=timeout_seconds)

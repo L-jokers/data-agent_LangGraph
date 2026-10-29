@@ -29,3 +29,27 @@ class MetricInfoMySQL(Base):
         JSON,
         comment="指标别名"
     )
+    metric_type: Mapped[str | None] = mapped_column(
+        String(32),
+        comment="指标类型"
+    )
+    expression: Mapped[str | None] = mapped_column(
+        Text,
+        comment="指标表达式"
+    )
+    numerator: Mapped[str | None] = mapped_column(
+        String(64),
+        comment="比例指标分子"
+    )
+    denominator: Mapped[str | None] = mapped_column(
+        String(64),
+        comment="比例指标分母"
+    )
+    base_dataset: Mapped[str | None] = mapped_column(
+        String(64),
+        comment="基础数据集"
+    )
+    status: Mapped[str | None] = mapped_column(
+        String(32),
+        comment="指标状态"
+    )

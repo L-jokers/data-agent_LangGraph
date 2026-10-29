@@ -35,7 +35,13 @@ CREATE TABLE metric_info
     name             VARCHAR(128) COMMENT '指标名称',
     description      TEXT COMMENT '指标描述',
     relevant_columns JSON COMMENT '关联的列',
-    alias            JSON COMMENT '指标别名'
+    alias            JSON COMMENT '指标别名',
+    metric_type      VARCHAR(32) COMMENT '指标类型',
+    expression       TEXT COMMENT '指标表达式',
+    numerator        VARCHAR(64) COMMENT '比例指标分子',
+    denominator      VARCHAR(64) COMMENT '比例指标分母',
+    base_dataset     VARCHAR(64) COMMENT '基础数据集',
+    status           VARCHAR(32) COMMENT '指标状态'
 );
 
 
@@ -45,4 +51,38 @@ CREATE TABLE column_metric
     column_id VARCHAR(64) COMMENT '列编号',
     metric_id VARCHAR(64) COMMENT '指标编号',
     PRIMARY KEY (column_id, metric_id)
+);
+
+DROP TABLE IF EXISTS time_dimension;
+CREATE TABLE time_dimension
+(
+    id                          VARCHAR(64) PRIMARY KEY COMMENT '时间维度编号',
+    table_name                  VARCHAR(128) NOT NULL COMMENT '时间维度表',
+    year_field                 VARCHAR(128) NOT NULL COMMENT '年份字段',
+    quarter_field              VARCHAR(128) NOT NULL COMMENT '季度字段',
+    month_field                VARCHAR(128) NOT NULL COMMENT '月份字段',
+    day_field                  VARCHAR(128) NOT NULL COMMENT '日字段',
+    date_key_field             VARCHAR(128) NOT NULL COMMENT '日期键字段',
+    supported_grains           JSON NOT NULL COMMENT '支持的时间粒度',
+    month_filter_requires_year BOOLEAN NOT NULL DEFAULT TRUE COMMENT '按月是否必须同时限制年份'
+);
+
+DROP TABLE IF EXISTS relationship;
+CREATE TABLE relationship
+(
+    id          VARCHAR(64) PRIMARY KEY COMMENT '关系编号',
+    source      VARCHAR(128) NOT NULL COMMENT '源字段',
+    target      VARCHAR(128) NOT NULL COMMENT '目标字段',
+    cardinality VARCHAR(32) NOT NULL COMMENT '关系基数',
+    enabled     BOOLEAN NOT NULL DEFAULT TRUE COMMENT '是否启用'
+);
+
+DROP TABLE IF EXISTS dataset;
+CREATE TABLE dataset
+(
+    id                 VARCHAR(64) PRIMARY KEY COMMENT '数据集编号',
+    table_name         VARCHAR(128) NOT NULL COMMENT '事实表',
+    grain              VARCHAR(64) NOT NULL COMMENT '数据粒度',
+    primary_key        VARCHAR(128) NOT NULL COMMENT '主键字段',
+    time_dimension_id  VARCHAR(64) NOT NULL COMMENT '默认时间维度'
 );

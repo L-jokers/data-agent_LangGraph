@@ -3,9 +3,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.entities.column_info import ColumnInfo
 from app.entities.column_metric import ColumnMetric
+from app.entities.dataset_info import DatasetInfo
 from app.entities.metric_info import MetricInfo
+from app.entities.relationship_info import RelationshipInfo
 from app.entities.table_info import TableInfo
+from app.entities.time_dimension_info import TimeDimensionInfo
 from app.models.column_info_mysql import ColumnInfoMySQL
+from app.repositories.mysql.meta.mappers.dataset_info_mapper import DatasetInfoMapper
+from app.repositories.mysql.meta.mappers.relationship_info_mapper import RelationshipInfoMapper
+from app.repositories.mysql.meta.mappers.time_dimension_info_mapper import TimeDimensionInfoMapper
 from app.models.table_info_mysql import TableInfoMySQL
 from app.repositories.mysql.meta.mappers.column_info_mapper import ColumnInfoMapper
 from app.repositories.mysql.meta.mappers.column_metric_mapper import ColumnMetricMapper
@@ -30,6 +36,18 @@ class MetaMySQLRepository:
 
     async def save_column_metrics(self, column_metrics: list[ColumnMetric]):
         self.session.add_all([ColumnMetricMapper.to_model(column_metric) for column_metric in column_metrics])
+
+    async def save_datasets(self, datasets: list[DatasetInfo]):
+        self.session.add_all([DatasetInfoMapper.to_model(dataset) for dataset in datasets])
+
+    async def save_relationships(self, relationships: list[RelationshipInfo]):
+        self.session.add_all([RelationshipInfoMapper.to_model(relationship) for relationship in relationships])
+
+    async def save_time_dimensions(self, time_dimensions: list[TimeDimensionInfo]):
+        self.session.add_all([
+            TimeDimensionInfoMapper.to_model(time_dimension)
+            for time_dimension in time_dimensions
+        ])
 
     async def get_column_info_by_id(self, column_id: str) -> ColumnInfo | None:
         result: ColumnInfoMySQL | None = await self.session.get(ColumnInfoMySQL, column_id)

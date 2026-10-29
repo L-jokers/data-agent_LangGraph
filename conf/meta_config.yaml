@@ -1,3 +1,8 @@
+model:
+  id: ecommerce
+  version: 1
+  description: 电商订单单轮查询语义模型
+
 tables:
   - name: dim_region
     role: dim
@@ -163,14 +168,124 @@ tables:
         alias: [销售额, 订单金额, 收入]
         sync: false
 
+datasets:
+  - id: orders
+    table: fact_order
+    grain: one_row_per_order
+    primary_key: order_id
+    time_dimension: order_date
+
+relationships:
+  order_date:
+    source: fact_order.date_id
+    target: dim_date.date_id
+    cardinality: many_to_one
+    enabled: true
+  order_region:
+    source: fact_order.region_id
+    target: dim_region.region_id
+    cardinality: many_to_one
+    enabled: true
+  order_product:
+    source: fact_order.product_id
+    target: dim_product.product_id
+    cardinality: many_to_one
+    enabled: true
+  order_customer:
+    source: fact_order.customer_id
+    target: dim_customer.customer_id
+    cardinality: many_to_one
+    enabled: true
+
+dimensions:
+  - id: region_name
+    name: 大区
+    table: dim_region
+    column: region_name
+    aliases: [地区, 区域, 大区]
+  - id: province
+    name: 省份
+    table: dim_region
+    column: province
+    aliases: [省份, 省, 所在省份]
+  - id: country
+    name: 国家
+    table: dim_region
+    column: country
+    aliases: [国家, 国家名称]
+  - id: customer_name
+    name: 客户名称
+    table: dim_customer
+    column: customer_name
+    aliases: [客户名称, 用户名称]
+  - id: gender
+    name: 性别
+    table: dim_customer
+    column: gender
+    aliases: [性别]
+  - id: member_level
+    name: 会员等级
+    table: dim_customer
+    column: member_level
+    aliases: [会员等级, 用户等级]
+  - id: product_name
+    name: 商品名称
+    table: dim_product
+    column: product_name
+    aliases: [商品名称, 产品名称]
+  - id: category
+    name: 商品类别
+    table: dim_product
+    column: category
+    aliases: [商品类别, 品类, 分类]
+  - id: brand
+    name: 品牌
+    table: dim_product
+    column: brand
+    aliases: [品牌, 品牌名称]
+
+time_dimensions:
+  order_date:
+    table: dim_date
+    year_field: year
+    quarter_field: quarter
+    month_field: month
+    day_field: day
+    date_key_field: date_id
+    supported_grains: [year, quarter, month, day]
+    month_filter_requires_year: true
+
 metrics:
-  - name: GMV
-    description: 全称Gross Merchandise Value，表示所有订单的成交金额总和。
-    relevant_columns:
-      - fact_order.order_amount
-    alias: [成交总额, 订单总额]
-  - name: AOV
-    description: 全称Average Order Value，表示所有订单的成交金额平均值。
-    relevant_columns:
-      - fact_order.order_quantity
-    alias: [平均单价, 平均订单金额]
+  - id: paid_amount
+    name: 订单实付金额
+    description: 订单实付金额总和。
+    type: additive
+    expression: SUM(fact_order.order_amount)
+    base_dataset: orders
+    aliases: [实付金额, 订单金额]
+    relevant_columns: [fact_order.order_amount]
+  - id: product_quantity
+    name: 商品购买数量
+    description: 商品购买数量总和。
+    type: additive
+    expression: SUM(fact_order.order_quantity)
+    base_dataset: orders
+    aliases: [购买数量, 销售数量, 件数]
+    relevant_columns: [fact_order.order_quantity]
+  - id: order_count
+    name: 订单数
+    description: 去重订单数量。
+    type: distinct_count
+    expression: COUNT(DISTINCT fact_order.order_id)
+    base_dataset: orders
+    aliases: [订单量]
+    relevant_columns: [fact_order.order_id]
+  - id: average_quantity_per_order
+    name: 平均每单购买件数
+    description: 当前筛选和分组范围内的商品购买数量除以订单数。
+    type: ratio
+    numerator: product_quantity
+    denominator: order_count
+    base_dataset: orders
+    aliases: [AOV, 平均每单购买数量]
+    relevant_columns: [fact_order.order_quantity, fact_order.order_id]
