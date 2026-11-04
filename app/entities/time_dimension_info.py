@@ -12,3 +12,4 @@ class TimeDimensionInfo:
     date_key_field: str
     supported_grains: list[str]
     month_filter_requires_year: bool
+    version_id: str | None = None

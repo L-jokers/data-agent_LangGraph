@@ -9,7 +9,8 @@ class ColumnMetricMapper:
     def to_entity(column_metric_mysql: ColumnMetricMySQL):
         return ColumnMetric(
             column_id=column_metric_mysql.column_id,
-            metric_id=column_metric_mysql.metric_id
+            metric_id=column_metric_mysql.metric_id,
+            version_id=column_metric_mysql.version_id,
         )
 
     @staticmethod

@@ -47,7 +47,7 @@ class FakeSession:
         return FakeResult(self.rows)
 
 
-def build_sample_plan(**payload):
+def build_sample_plan(resolved_time=None, **payload):
     config = load_meta_config(CONFIG_PATH)
     data = {
         "status": "ready",
@@ -59,7 +59,7 @@ def build_sample_plan(**payload):
         "limit": 10,
     }
     data.update(payload)
-    return build_query_plan(config, QueryIntent.from_payload(data))
+    return build_query_plan(config, QueryIntent.from_payload(data), resolved_time)
 
 
 class SQLPhase4Test(unittest.TestCase):
@@ -71,6 +71,32 @@ class SQLPhase4Test(unittest.TestCase):
         self.assertIn("ORDER BY `paid_amount` DESC", compiled.sql)
         self.assertIn("LIMIT 10", compiled.sql)
         self.assertIn("MAX_EXECUTION_TIME(5000)", compiled.sql)
+
+    def test_discrete_dates_do_not_expand_to_intervening_days(self):
+        plan = build_sample_plan(
+            dimensions=[],
+            group_by=[],
+            order_by=[],
+            resolved_time={"dates": ["2026-10-26", "2026-10-28"], "ranges": [], "grain": "day"},
+        )
+        compiled = compile_query(plan)
+        self.assertIn(" OR ", compiled.sql)
+        self.assertNotIn("p2", compiled.params)
+        self.assertNotIn("2026-10-27", str(compiled.params))
+
+    def test_multiple_ranges_keep_parenthesized_or_semantics(self):
+        plan = build_sample_plan(
+            dimensions=[],
+            group_by=[],
+            order_by=[],
+            resolved_time={"ranges": [
+                {"start": "2026-01-01", "end": "2026-01-03"},
+                {"start": "2026-02-01", "end": "2026-02-03"},
+            ], "dates": [], "grain": "day"},
+        )
+        compiled = compile_query(plan)
+        self.assertIn(" OR ", compiled.sql)
+        self.assertGreaterEqual(compiled.sql.count("("), 3)
 
     def test_explicit_limit_is_preserved_when_below_system_max(self):
         plan = build_sample_plan(limit=2)

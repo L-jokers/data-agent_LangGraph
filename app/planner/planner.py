@@ -20,6 +20,7 @@ from app.planner.models import (
     TimeConditionPlan,
     TimePlan,
 )
+from app.services.metric_dependency_validator import validate_metric_dependencies
 
 
 SUPPORTED_FILTER_OPERATORS = {"eq", "in", "gte", "lte", "contains"}
@@ -27,9 +28,9 @@ MAX_LIMIT = 1000
 
 
 def build_query_plan(
-    config: MetaConfig,
+    config: MetaConfig | Any,
     intent: QueryIntent,
-    resolved_time: dict[str, str] | None = None,
+    resolved_time: dict[str, Any] | None = None,
 ) -> QueryPlan:
     """将结构化意图编译为SQL阶段可消费的确定性查询计划。
 
@@ -41,12 +42,39 @@ def build_query_plan(
     if intent.status != QueryIntentStatus.READY:
         raise QueryPlanError("非ready意图不能生成查询计划")
 
+    snapshot = config if hasattr(config, "to_meta_config") and hasattr(config, "metric_dependencies") else None
+    if snapshot is not None:
+        config = snapshot.to_meta_config()
     config.validate()
     dataset = _only_dataset(config)
     metrics = tuple(_resolve_metrics(config, intent.metrics))
     if not metrics:
         raise QueryPlanError("查询计划至少需要一个指标")
     metric_configs = {metric_config.id: metric_config for metric_config in config.metrics}
+    if snapshot is not None:
+        validate_metric_dependencies(snapshot, [metric.id for metric in metrics])
+        dependency_map: dict[str, tuple[str, ...]] = {}
+        for item in snapshot.metric_dependencies:
+            dependency_map[item.metric_id] = dependency_map.get(item.metric_id, ()) + (item.depends_on_metric_id,)
+        metric_by_id = {metric.id: metric for metric in snapshot.metrics}
+        metrics = tuple(
+            MetricPlan(
+                id=source.id,
+                name=source.name,
+                metric_type=source.metric_type or "simple",
+                expression=source.expression,
+                numerator=source.numerator,
+                denominator=source.denominator,
+                aliases=tuple(source.alias),
+                dependencies=dependency_map.get(source.id, ()),
+                grain=getattr(source, "grain", None),
+                aggregation=getattr(source, "aggregation", None),
+                stage=getattr(source, "stage", None),
+                expression_ast=getattr(source, "expression_ast", None),
+                source_columns=tuple(source.relevant_columns),
+            )
+            for source in (metric_by_id[metric.id] for metric in metrics)
+        )
     for metric in metrics:
         if metric_configs[metric.id].base_dataset != dataset.id:
             raise QueryPlanError(f"指标不属于当前数据集: {metric.id}")
@@ -67,6 +95,11 @@ def build_query_plan(
         raise QueryPlanError(f"limit必须在1到{MAX_LIMIT}之间")
 
     aggregations = {metric.id: _aggregation_for(metric) for metric in metrics}
+    expression_asts = {
+        metric.id: metric.expression_ast
+        for metric in config.metrics
+        if metric.expression_ast is not None
+    }
     return QueryPlan(
         dataset_id=dataset.id,
         fact_table=dataset.table,
@@ -79,6 +112,10 @@ def build_query_plan(
         limit=limit,
         limit_explicit=limit_explicit,
         aggregations=aggregations,
+        semantic_version_id=snapshot.version_id if snapshot is not None else None,
+        expression_asts=expression_asts,
+        metric_dependencies={metric.id: metric.dependencies for metric in metrics},
+        metric_source_columns={metric.id: tuple(metric.relevant_columns) for metric in config.metrics},
     )
 
 
@@ -106,6 +143,8 @@ def _resolve_metrics(config: MetaConfig, requested: list[str]) -> list[MetricPla
             numerator=metric.numerator,
             denominator=metric.denominator,
             aliases=tuple(metric.aliases),
+            expression_ast=metric.expression_ast,
+            source_columns=tuple(metric.relevant_columns),
         ))
     return result
 
@@ -162,7 +201,7 @@ def _resolve_filters(config: MetaConfig, filters: list[dict[str, Any]]) -> list[
     return result
 
 
-def _build_time_plan(config: MetaConfig, resolved_time: dict[str, str] | None) -> TimePlan | None:
+def _build_time_plan(config: MetaConfig, resolved_time: dict[str, Any] | None) -> TimePlan | None:
     """根据语义时间维度配置生成SQL时间条件。
 
     对月份粒度显式生成年份和月份两个条件，避免仅按月份过滤导致跨年
@@ -173,11 +212,13 @@ def _build_time_plan(config: MetaConfig, resolved_time: dict[str, str] | None) -
     if len(config.time_dimensions) != 1:
         raise QueryPlanError("当前模型必须且只能有一个时间维度")
     time_dimension: TimeDimensionConfig = config.time_dimensions[0]
-    start = resolved_time.get("start")
-    end = resolved_time.get("end")
+    dates = tuple(resolved_time.get("dates") or ())
+    ranges = tuple(resolved_time.get("ranges") or ())
+    start = resolved_time.get("start") or (dates[0] if dates else ranges[0].get("start") if ranges else None)
+    end = resolved_time.get("end") or (dates[-1] if dates else ranges[-1].get("end") if ranges else None)
     grain = resolved_time.get("grain")
     if not start or not end or not grain:
-        raise QueryPlanError("解析后的时间范围缺少start、end或grain")
+        raise QueryPlanError("解析后的时间条件缺少日期集合、区间或grain")
     if grain not in time_dimension.supported_grains:
         raise QueryPlanError(f"时间粒度不支持: {grain}")
 
@@ -191,10 +232,28 @@ def _build_time_plan(config: MetaConfig, resolved_time: dict[str, str] | None) -
             TimeConditionPlan(f"{time_dimension.table}.{time_dimension.month_field}", "eq", start_month),
         )
     else:
-        conditions = (
-            TimeConditionPlan(f"{time_dimension.table}.{time_dimension.date_key_field}", "gte", start),
-            TimeConditionPlan(f"{time_dimension.table}.{time_dimension.date_key_field}", "lte", end),
-        )
+        field = f"{time_dimension.table}.{time_dimension.date_key_field}"
+        if dates and ranges:
+            raise QueryPlanError("离散日期和连续区间不能在同一时间计划中混合")
+        if dates:
+            condition_groups = tuple((TimeConditionPlan(field, "eq", value),) for value in dates)
+            conditions = condition_groups[0]
+        elif ranges:
+            condition_groups = tuple((
+                TimeConditionPlan(field, "gte", item["start"]),
+                TimeConditionPlan(field, "lte", item["end"]),
+            ) for item in ranges)
+            conditions = condition_groups[0]
+        else:
+            condition_groups = ((
+                TimeConditionPlan(field, "gte", start),
+                TimeConditionPlan(field, "lte", end),
+            ),)
+            conditions = condition_groups[0]
+    if grain == "month":
+        condition_groups = (conditions,)
+    elif not locals().get("condition_groups"):
+        condition_groups = (conditions,)
     return TimePlan(
         dimension_id=time_dimension.id,
         table=time_dimension.table,
@@ -202,6 +261,7 @@ def _build_time_plan(config: MetaConfig, resolved_time: dict[str, str] | None) -
         start=start,
         end=end,
         conditions=conditions,
+        condition_groups=tuple(condition_groups),
     )
 
 
@@ -309,13 +369,11 @@ def _resolve_order_by(
 
 
 def _aggregation_for(metric: MetricPlan) -> str:
-    """从稳定指标ID生成受方案约束的聚合表达式。"""
-    if metric.id == "order_count":
-        return "COUNT(DISTINCT fact_order.order_id)"
-    if metric.id == "average_quantity_per_order":
-        return "SUM(fact_order.order_quantity) / NULLIF(COUNT(DISTINCT fact_order.order_id), 0)"
+    """保留旧计划字段；真正生产编译由 expression_ast 完成。"""
     if metric.expression:
         return metric.expression
+    if metric.expression_ast is not None:
+        return "<expression_ast>"
     raise QueryPlanError(f"指标没有可用聚合定义: {metric.id}")
 
 

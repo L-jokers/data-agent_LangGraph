@@ -24,7 +24,8 @@ async def resolve_time(state: DataAgentState, runtime: Runtime[DataAgentContext]
     except (TimeParseError, ValueError) as exc:
         logger.info(f"时间表达式需要澄清或不支持: {exc}")
         message = str(exc)
-        status = QueryIntentStatus.NEEDS_CLARIFICATION if "缺少年份" in message else QueryIntentStatus.UNSUPPORTED
+        status = QueryIntentStatus.NEEDS_CLARIFICATION if getattr(exc, "status", "unsupported") == "needs_clarification" else QueryIntentStatus.UNSUPPORTED
         intent.status = status
         intent.message = message
+        intent.missing = [getattr(exc, "code", "TIME_UNSUPPORTED")]
         return {"query_intent": intent, "resolved_time": None}

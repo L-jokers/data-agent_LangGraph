@@ -1,4 +1,7 @@
+import hashlib
+import json
 import uuid
+from dataclasses import asdict
 from pathlib import Path
 
 from langchain_huggingface import HuggingFaceEndpointEmbeddings
@@ -7,6 +10,8 @@ from app.core.log import logger
 from app.entities.column_info import ColumnInfo
 from app.entities.column_metric import ColumnMetric
 from app.entities.dataset_info import DatasetInfo
+from app.entities.dimension_info import DimensionInfo
+from app.entities.metric_dependency import MetricDependency
 from app.entities.metric_info import MetricInfo
 from app.entities.relationship_info import RelationshipInfo
 from app.entities.table_info import TableInfo
@@ -24,10 +29,10 @@ class MetaKnowledgeService:
         self,
         meta_mysql_repository: MetaMySQLRepository,
         dw_mysql_repository: DWMySQLRepository,
-        column_qdrant_repository: ColumnQdrantRepository,
-        embedding_client: HuggingFaceEndpointEmbeddings,
-        value_es_repository: ValueESRepository,
-        metric_qdrant_repository: MetricQdrantRepository,
+        column_qdrant_repository: ColumnQdrantRepository | None = None,
+        embedding_client: HuggingFaceEndpointEmbeddings | None = None,
+        value_es_repository: ValueESRepository | None = None,
+        metric_qdrant_repository: MetricQdrantRepository | None = None,
     ):
         self.meta_mysql_repository = meta_mysql_repository
         self.dw_mysql_repository = dw_mysql_repository
@@ -36,7 +41,16 @@ class MetaKnowledgeService:
         self.value_es_repository = value_es_repository
         self.metric_qdrant_repository = metric_qdrant_repository
 
-    async def _save_tables_to_meta_db(self, meta_config: MetaConfig)-> list[ColumnInfo]:
+    @staticmethod
+    def config_fingerprint(meta_config: MetaConfig) -> str:
+        canonical_content = json.dumps(
+            asdict(meta_config), ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        )
+        return hashlib.sha256(canonical_content.encode("utf-8")).hexdigest()
+
+    async def _save_tables_to_meta_db(
+        self, meta_config: MetaConfig, version_id: str
+    ) -> list[ColumnInfo]:
         table_infos: list[TableInfo] = []
         column_infos: list[ColumnInfo] = []
 
@@ -47,6 +61,7 @@ class MetaKnowledgeService:
                 name=table.name,
                 role=table.role,
                 description=table.description,
+                version_id=version_id,
             )
             table_infos.append(table_info)
 
@@ -65,13 +80,15 @@ class MetaKnowledgeService:
                     description=column.description,
                     alias=column.alias,
                     table_id=table.name,
+                    version_id=version_id,
                 )
                 column_infos.append(column_info)
 
         # 保存表信息和字段信息到元数据数据库 session.begin()自动管理事务生命周期
-        async with self.meta_mysql_repository.session.begin():
-            await self.meta_mysql_repository.save_table_infos(table_infos)
-            await self.meta_mysql_repository.save_column_infos(column_infos)
+        await self.meta_mysql_repository.save_table_infos(table_infos, version_id)
+        await self.meta_mysql_repository.session.flush()
+        await self.meta_mysql_repository.save_column_infos(column_infos, version_id)
+        await self.meta_mysql_repository.session.flush()
 
         return column_infos
 
@@ -155,9 +172,10 @@ class MetaKnowledgeService:
         # 批量保存到Elasticsearch
         await self.value_es_repository.index(value_infos)
 
-    async def _save_metrics_to_meta_db(self, meta_config):
+    async def _save_metrics_to_meta_db(self, meta_config: MetaConfig, version_id: str):
         metric_infos: list[MetricInfo] = []
         column_metrics: list[ColumnMetric] = []
+        metric_dependencies: list[MetricDependency] = []
         for metric in meta_config.metrics:
             # 构造MetricInfo数据
             metric_info = MetricInfo(
@@ -171,23 +189,44 @@ class MetaKnowledgeService:
                 numerator=metric.numerator,
                 denominator=metric.denominator,
                 base_dataset=metric.base_dataset,
+                version_id=version_id,
             )
             metric_infos.append(metric_info)
 
             for relevant_column in metric.relevant_columns:
                 # 构造ColumnMetric数据
                 column_metric = ColumnMetric(
-                    column_id=relevant_column, metric_id=metric.id
+                    column_id=relevant_column,
+                    metric_id=metric.id,
+                    version_id=version_id,
                 )
                 column_metrics.append(column_metric)
-        # 保存到元数据数据库
-        async with self.meta_mysql_repository.session.begin():
-            await self.meta_mysql_repository.save_metric_infos(metric_infos)
-            await self.meta_mysql_repository.save_column_metrics(column_metrics)
+            for dependency_order, dependency_id in enumerate(
+                (metric.numerator, metric.denominator)
+            ):
+                if dependency_id is not None:
+                    metric_dependencies.append(
+                        MetricDependency(
+                            metric_id=metric.id,
+                            depends_on_metric_id=dependency_id,
+                            dependency_order=dependency_order,
+                            version_id=version_id,
+                        )
+                    )
+        await self.meta_mysql_repository.save_metric_infos(metric_infos, version_id)
+        await self.meta_mysql_repository.session.flush()
+        await self.meta_mysql_repository.save_column_metrics(column_metrics, version_id)
+        await self.meta_mysql_repository.session.flush()
+        await self.meta_mysql_repository.save_metric_dependencies(
+            metric_dependencies, version_id
+        )
+        await self.meta_mysql_repository.session.flush()
 
         return metric_infos
 
-    async def _save_semantic_objects_to_meta_db(self, meta_config: MetaConfig):
+    async def _save_semantic_objects_to_meta_db(
+        self, meta_config: MetaConfig, version_id: str
+    ):
         datasets = [
             DatasetInfo(
                 id=dataset.id,
@@ -195,6 +234,7 @@ class MetaKnowledgeService:
                 grain=dataset.grain,
                 primary_key=dataset.primary_key,
                 time_dimension_id=dataset.time_dimension,
+                version_id=version_id,
             )
             for dataset in meta_config.datasets
         ]
@@ -205,6 +245,7 @@ class MetaKnowledgeService:
                 target=relationship.target,
                 cardinality=relationship.cardinality,
                 enabled=relationship.enabled,
+                version_id=version_id,
             )
             for relationship in meta_config.relationships
         ]
@@ -219,13 +260,29 @@ class MetaKnowledgeService:
                 date_key_field=time_dimension.date_key_field,
                 supported_grains=time_dimension.supported_grains,
                 month_filter_requires_year=time_dimension.month_filter_requires_year,
+                version_id=version_id,
             )
             for time_dimension in meta_config.time_dimensions
         ]
-        async with self.meta_mysql_repository.session.begin():
-            await self.meta_mysql_repository.save_datasets(datasets)
-            await self.meta_mysql_repository.save_relationships(relationships)
-            await self.meta_mysql_repository.save_time_dimensions(time_dimensions)
+        dimensions = [
+            DimensionInfo(
+                id=dimension.id,
+                name=dimension.name,
+                table_id=dimension.table,
+                column_id=f"{dimension.table}.{dimension.column}",
+                aliases=dimension.aliases,
+                version_id=version_id,
+            )
+            for dimension in meta_config.dimensions
+        ]
+        await self.meta_mysql_repository.save_dimensions(dimensions, version_id)
+        await self.meta_mysql_repository.session.flush()
+        await self.meta_mysql_repository.save_time_dimensions(time_dimensions, version_id)
+        await self.meta_mysql_repository.session.flush()
+        await self.meta_mysql_repository.save_datasets(datasets, version_id)
+        await self.meta_mysql_repository.session.flush()
+        await self.meta_mysql_repository.save_relationships(relationships, version_id)
+        await self.meta_mysql_repository.session.flush()
 
     async def _save_metric_info_to_qdrant(self, metric_infos: list[MetricInfo]):
         # 确保collection存在
@@ -268,35 +325,53 @@ class MetaKnowledgeService:
         # 保存数据到qdrant
         await self.metric_qdrant_repository.upsert(ids, embeddings, payloads)
 
-    async def build(self, config_path: Path):
+    @staticmethod
+    def _expected_metadata_counts(meta_config: MetaConfig) -> dict[str, int]:
+        return {
+            "table_info": len(meta_config.tables),
+            "column_info": sum(len(table.columns) for table in meta_config.tables),
+            "metric_info": len(meta_config.metrics),
+            "column_metric": sum(
+                len(metric.relevant_columns) for metric in meta_config.metrics
+            ),
+            "dataset": len(meta_config.datasets),
+            "dimension_info": len(meta_config.dimensions),
+            "metric_dependency": sum(
+                int(metric.numerator is not None)
+                + int(metric.denominator is not None)
+                for metric in meta_config.metrics
+            ),
+            "relationship": len(meta_config.relationships),
+            "time_dimension": len(meta_config.time_dimensions),
+        }
+
+    async def build(self, config_path: Path, version_id: str):
         meta_config = load_meta_config(config_path)
         await meta_config.validate_against_dw(self.dw_mysql_repository)
-        logger.info("加载配置文件")
-        # 2.处理表信息
-        if meta_config.tables:
-            # 2.1 保存表信息到meta数据库
-            column_infos = await self._save_tables_to_meta_db(meta_config)
-            logger.info("保存表信息到meta数据库")
+        content_hash = self.config_fingerprint(meta_config)
+        expected_counts = self._expected_metadata_counts(meta_config)
 
-            # 2.2 为字段信息建立向量索引
-            await self._save_column_info_to_qdrant(column_infos)
-            logger.info("为字段信息建立向量索引")
+        async with self.meta_mysql_repository.session.begin():
+            created = await self.meta_mysql_repository.create_draft_version(
+                version_id,
+                content_hash,
+                description=meta_config.model.description,
+            )
+            if not created:
+                actual_counts = await self.meta_mysql_repository.get_version_metadata_counts(
+                    version_id
+                )
+                if actual_counts != expected_counts:
+                    raise ValueError(
+                        "同版本元数据数量与配置不一致，拒绝覆盖或补写"
+                    )
+                logger.info("语义版本已存在且内容校验一致，未写入")
+                return
 
-            # 2.3 为字段取值建立全文索引
-            await self._save_value_info_to_es(meta_config, column_infos)
-            logger.info("为字段取值建立全文索引")
+            if meta_config.tables:
+                await self._save_tables_to_meta_db(meta_config, version_id)
+            await self._save_semantic_objects_to_meta_db(meta_config, version_id)
+            if meta_config.metrics:
+                await self._save_metrics_to_meta_db(meta_config, version_id)
 
-        await self._save_semantic_objects_to_meta_db(meta_config)
-        logger.info("保存数据集、关系和时间维度元数据")
-
-        # 3.处理指标信息
-        if meta_config.metrics:
-            # 3.1 保存指标信息到meta数据库
-            metric_infos = await self._save_metrics_to_meta_db(meta_config)
-            logger.info("保存指标信息到meta数据库")
-
-            # 3.2 为指标信息建立向量索引
-            await self._save_metric_info_to_qdrant(metric_infos)
-            logger.info("为指标信息建立向量索引")
-
-        logger.info("元数据知识库构建完成")
+        logger.info("语义版本 %s 已初始化为 draft；未激活，未构建检索索引", version_id)

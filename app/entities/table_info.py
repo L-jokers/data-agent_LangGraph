@@ -7,3 +7,4 @@ class TableInfo:
     name: str
     role: str
     description: str
+    version_id: str | None = None

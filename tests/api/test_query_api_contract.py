@@ -2,7 +2,7 @@
 import json
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from app.api.schemas.query_schema import QuerySchema
 from app.services.query_service import QueryService
@@ -26,7 +26,11 @@ def parse_events(lines):
 
 class QueryApiContractTests(unittest.TestCase):
     def service(self):
-        return QueryService(None, None, None, None, None, None)
+        service = QueryService(None, None, None, None, None, None)
+        service.snapshot_loader = SimpleNamespace(
+            load_for_query=AsyncMock(return_value=SimpleNamespace(version_id="test-version"))
+        )
+        return service
 
     def collect(self, service):
         return parse_events(asyncio.run(self._collect(service)))
@@ -50,10 +54,11 @@ class QueryApiContractTests(unittest.TestCase):
         with patch("app.services.query_service.graph", graph):
             events = self.collect(self.service())
         self.assertEqual([event["type"] for event in events], [
-            "progress", "sql", "result", "done"
+            "session", "progress", "sql", "result", "session", "done"
         ])
         self.assertEqual(events[-1]["status"], "success")
-        self.assertEqual(events[2]["rows"], [{"value": 1}])
+        result = next(event for event in events if event["type"] == "result")
+        self.assertEqual(result["rows"], [{"value": 1}])
 
     def test_clarification_does_not_emit_sql_or_execute(self):
         graph = FakeGraph([
@@ -73,7 +78,7 @@ class QueryApiContractTests(unittest.TestCase):
         ])
         with patch("app.services.query_service.graph", graph):
             events = self.collect(self.service())
-        self.assertEqual([event["type"] for event in events], ["unsupported", "done"])
+        self.assertEqual([event["type"] for event in events], ["session", "unsupported", "session", "done"])
         self.assertNotIn("result", [event["type"] for event in events])
 
     def test_empty_result_is_success(self):
@@ -89,8 +94,9 @@ class QueryApiContractTests(unittest.TestCase):
         ])
         with patch("app.services.query_service.graph", graph):
             events = self.collect(self.service())
-        self.assertEqual(events[2]["rows"], [])
-        self.assertTrue(events[2]["meta"]["empty"])
+        result = next(event for event in events if event["type"] == "result")
+        self.assertEqual(result["rows"], [])
+        self.assertTrue(result["meta"]["empty"])
         self.assertEqual(events[-1]["status"], "success")
 
     def test_exception_is_sanitized_and_has_error_terminal(self):
@@ -100,8 +106,8 @@ class QueryApiContractTests(unittest.TestCase):
         payload = json.dumps(events, ensure_ascii=False)
         self.assertNotIn("password", payload)
         self.assertNotIn("secret-api-key", payload)
-        self.assertEqual([event["type"] for event in events], ["error", "done"])
-        self.assertEqual(events[-1]["status"], "error")
+        self.assertEqual([event["type"] for event in events], ["session", "session", "error", "done"])
+        self.assertEqual(events[-1]["status"], "execution_unknown")
 
 
 if __name__ == "__main__":

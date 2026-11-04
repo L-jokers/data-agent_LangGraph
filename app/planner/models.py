@@ -15,6 +15,12 @@ class MetricPlan:
     numerator: str | None
     denominator: str | None
     aliases: tuple[str, ...] = ()
+    dependencies: tuple[str, ...] = ()
+    grain: str | None = None
+    aggregation: str | None = None
+    stage: str | None = None
+    expression_ast: dict[str, Any] | None = None
+    source_columns: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -58,6 +64,7 @@ class TimePlan:
     start: str
     end: str
     conditions: tuple[TimeConditionPlan, ...]
+    condition_groups: tuple[tuple[TimeConditionPlan, ...], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -79,3 +86,7 @@ class QueryPlan:
     limit: int
     limit_explicit: bool = False
     aggregations: dict[str, str] = field(default_factory=dict)
+    semantic_version_id: str | None = None
+    expression_asts: dict[str, dict[str, Any]] = field(default_factory=dict)
+    metric_dependencies: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    metric_source_columns: dict[str, tuple[str, ...]] = field(default_factory=dict)

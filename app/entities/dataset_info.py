@@ -8,3 +8,4 @@ class DatasetInfo:
     grain: str
     primary_key: str
     time_dimension_id: str
+    version_id: str | None = None

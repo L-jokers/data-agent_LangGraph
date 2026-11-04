@@ -10,15 +10,6 @@ def sanitize_execution_error(exc: Exception) -> dict[str, str]:
     return {"code": "QUERY_EXECUTION_FAILED", "message": "查询执行失败"}
 
 
-def _is_empty_aggregate(sql: str, rows: list[dict]) -> bool:
-    if len(rows) != 1 or not ("COUNT(" in sql or "SUM(" in sql):
-        return False
-    return all(
-        value is None or value == 0 or value == "0" or value == "0.0"
-        for value in rows[0].values()
-    )
-
-
 async def execute_sql(state: DataAgentState, runtime: Runtime[DataAgentContext]):
     """Execute a validated query and emit result/error followed by one terminal event."""
     writer = runtime.stream_writer
@@ -32,7 +23,7 @@ async def execute_sql(state: DataAgentState, runtime: Runtime[DataAgentContext])
             max_rows=compiled.max_rows,
             timeout_seconds=compiled.timeout_seconds,
         )
-        rows = [] if _is_empty_aggregate(compiled.sql, result.rows) else result.rows
+        rows = result.rows
         writer({
             "type": "result",
             "rows": rows,

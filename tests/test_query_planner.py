@@ -61,6 +61,27 @@ class QueryPlannerTest(unittest.TestCase):
         )
         self.assertIn("order_date", [join.relationship_id for join in plan.joins])
 
+    def test_discrete_dates_compile_as_or_equal_groups(self):
+        plan = build_query_plan(
+            self.config,
+            ready_intent(metrics=["paid_amount"]),
+            {"dates": ["2026-10-26", "2026-10-28"], "ranges": [], "grain": "day"},
+        )
+        self.assertEqual(len(plan.time.condition_groups), 2)
+        self.assertEqual([group[0].operator for group in plan.time.condition_groups], ["eq", "eq"])
+
+    def test_multiple_ranges_remain_or_groups(self):
+        plan = build_query_plan(
+            self.config,
+            ready_intent(metrics=["paid_amount"]),
+            {"ranges": [
+                {"start": "2026-01-01", "end": "2026-01-03"},
+                {"start": "2026-02-01", "end": "2026-02-03"},
+            ], "dates": [], "grain": "day"},
+        )
+        self.assertEqual(len(plan.time.condition_groups), 2)
+        self.assertEqual([len(group) for group in plan.time.condition_groups], [2, 2])
+
     def test_order_count_and_average_quantity_use_confirmed_aggregations(self):
         plan = build_query_plan(
             self.config,

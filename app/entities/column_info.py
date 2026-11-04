@@ -12,3 +12,4 @@ class ColumnInfo:
     description: str
     alias: list[str]
     table_id: str
+    version_id: str | None = None

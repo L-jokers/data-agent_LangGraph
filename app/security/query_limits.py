@@ -4,9 +4,9 @@ from typing import Any
 
 @dataclass(frozen=True)
 class QueryLimits:
-    max_rows: int = 100
-    timeout_seconds: float = 10.0
-    max_execution_time_ms: int = 5000
+    max_rows: int = 20
+    timeout_seconds: float = 60.0
+    max_execution_time_ms: int = 60000
 
 
 @dataclass(frozen=True)

@@ -9,6 +9,15 @@ llm = init_chat_model(model=app_config.llm.model_name,
                       temperature=0)
 
 
+def create_schema_constrained_model(model, schema):
+    return model.with_structured_output(
+        schema,
+        method="json_schema",
+        strict=True,
+        include_raw=False,
+    )
+
+
 if __name__ == '__main__':
     # for chunk in llm.stream("What is the meaning of life?"):
     #     print(chunk.text)

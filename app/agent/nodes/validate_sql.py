@@ -14,7 +14,11 @@ async def validate_sql(state: DataAgentState, runtime: Runtime[DataAgentContext]
     try:
         if compiled is None:
             raise SQLSecurityError("missing compiled SQL")
-        validate_compiled_query(compiled)
+        validate_compiled_query(
+            compiled,
+            snapshot=runtime.context.get("semantic_model_snapshot"),
+            plan=state.get("query_plan"),
+        )
         writer({"type": "progress", "step": "验证SQL", "status": "success"})
         writer({"type": "sql", "sql": compiled.sql})
         logger.info("SQL AST validation succeeded")

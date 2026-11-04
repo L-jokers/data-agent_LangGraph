@@ -14,7 +14,11 @@ async def query(
     query: QuerySchema, query_service: QueryService = Depends(get_query_service)
 ):
     return StreamingResponse(
-        query_service.query(query.query),
+        query_service.query(
+            query.query,
+            session_id=query.session_id,
+            clarification_id=query.clarification_id,
+        ),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

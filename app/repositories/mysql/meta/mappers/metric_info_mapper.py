@@ -19,6 +19,14 @@ class MetricInfoMapper:
             denominator=model.denominator,
             base_dataset=model.base_dataset,
             status=model.status or "active",
+            version_id=model.version_id,
+            grain=model.grain,
+            period=model.period,
+            business_scope=model.business_scope,
+            aggregation=model.aggregation,
+            stage=model.stage,
+            allowed_dimensions=model.allowed_dimensions,
+            expression_ast=model.expression_ast,
         )
 
     @staticmethod

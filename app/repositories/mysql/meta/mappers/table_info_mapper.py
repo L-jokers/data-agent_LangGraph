@@ -11,7 +11,8 @@ class TableInfoMapper:
             id=table_info_mysql.id,
             name=table_info_mysql.name,
             role=table_info_mysql.role,
-            description=table_info_mysql.description
+            description=table_info_mysql.description,
+            version_id=table_info_mysql.version_id,
         )
 
     @staticmethod

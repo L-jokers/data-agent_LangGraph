@@ -86,6 +86,7 @@ class MetricConfig:
     denominator: str | None = None
     aliases: list[str] = field(default_factory=list)
     relevant_columns: list[str] = field(default_factory=list)
+    expression_ast: dict[str, Any] | None = None
 
     @property
     def alias(self) -> list[str]:
@@ -222,12 +223,8 @@ class MetaConfig:
                     or metric_map[metric.denominator].base_dataset != metric.base_dataset
                 ):
                     errors.append(f"比例指标 {metric.id} 的分子分母必须属于同一数据集")
-                if metric.expression:
-                    errors.append(f"比例指标 {metric.id} 不应同时声明expression")
-            elif not metric.expression:
-                errors.append(f"非比例指标 {metric.id} 必须声明expression")
-            if metric.id == "order_count" and metric.expression != "COUNT(DISTINCT fact_order.order_id)":
-                errors.append("order_count必须使用COUNT(DISTINCT fact_order.order_id)")
+            elif not metric.expression and not metric.expression_ast:
+                errors.append(f"非比例指标 {metric.id} 必须声明expression_ast")
             for reference in metric.relevant_columns:
                 table_name, column_name = _split_reference(reference, errors, f"指标 {metric.id} 字段")
                 if table_name in table_columns and column_name not in table_columns[table_name]:
@@ -241,6 +238,8 @@ class MetaConfig:
                     table_name, column_name = _split_reference(reference, errors, f"指标 {metric.id} 表达式")
                     if table_name in table_columns and column_name not in table_columns[table_name]:
                         errors.append(f"指标 {metric.id} 表达式引用不存在字段: {reference}")
+            if metric.expression_ast is not None and not isinstance(metric.expression_ast, dict):
+                errors.append(f"指标 {metric.id} expression_ast必须是对象")
             for alias in metric.aliases:
                 previous = aliases.setdefault(alias, metric.id)
                 if previous != metric.id:

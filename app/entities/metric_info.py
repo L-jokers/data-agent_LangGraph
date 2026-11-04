@@ -14,3 +14,11 @@ class MetricInfo:
     denominator: str | None = None
     base_dataset: str | None = None
     status: str = "active"
+    version_id: str | None = None
+    grain: str | None = None
+    period: str | None = None
+    business_scope: str | None = None
+    aggregation: str | None = None
+    stage: str | None = None
+    allowed_dimensions: list[str] | None = None
+    expression_ast: dict | None = None

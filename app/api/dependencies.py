@@ -12,6 +12,7 @@ from app.repositories.mysql.meta.meta_mysql_repository import MetaMySQLRepositor
 from app.repositories.qdrant.column_qdrant_repository import ColumnQdrantRepository
 from app.repositories.qdrant.metric_qdrant_repository import MetricQdrantRepository
 from app.services.query_service import QueryService
+from app.repositories.mysql.application_session_repository import ApplicationSessionRepository
 
 
 async def get_meta_session():
@@ -54,7 +55,7 @@ async def get_query_service(
         value_es_repository: ValueESRepository = Depends(get_value_es_repository),
         metric_qdrant_repository: MetricQdrantRepository = Depends(get_metric_qdrant_repository),
         meta_mysql_repository: MetaMySQLRepository = Depends(get_meta_mysql_repository),
-        dw_mysql_repository: DWMySQLRepository = Depends(get_dw_mysql_repository)
+        dw_mysql_repository: DWMySQLRepository = Depends(get_dw_mysql_repository),
 ) -> QueryService:
     return QueryService(
         embedding_client=embedding_client,
@@ -62,5 +63,6 @@ async def get_query_service(
         value_es_repository=value_es_repository,
         metric_qdrant_repository=metric_qdrant_repository,
         meta_mysql_repository=meta_mysql_repository,
-        dw_mysql_repository=dw_mysql_repository
+        dw_mysql_repository=dw_mysql_repository,
+        session_repository=ApplicationSessionRepository(meta_mysql_repository.session),
     )

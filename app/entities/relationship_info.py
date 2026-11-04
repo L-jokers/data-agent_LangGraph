@@ -8,3 +8,4 @@ class RelationshipInfo:
     target: str
     cardinality: str
     enabled: bool
+    version_id: str | None = None

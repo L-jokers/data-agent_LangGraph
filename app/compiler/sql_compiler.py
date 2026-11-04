@@ -2,6 +2,12 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.planner.models import QueryPlan, QueryPlanError
+from app.compiler.expression_ast import (
+    ExpressionASTError,
+    ExpressionCompileContext,
+    compile_metric_ast,
+    legacy_expression_to_ast,
+)
 
 
 class SQLCompilerError(ValueError):
@@ -54,20 +60,34 @@ def compile_query(
             f"{_quote(dimension.table)}.{_quote(dimension.column)} AS {_quote(dimension.id)}"
         )
 
+    metric_asts = dict(plan.expression_asts)
+    for metric in plan.metrics:
+        if metric.expression_ast is not None:
+            metric_asts.setdefault(metric.id, metric.expression_ast)
+    allowed_columns.update(
+        reference
+        for references in plan.metric_source_columns.values()
+        for reference in references
+    )
+    expression_context = ExpressionCompileContext(
+        allowed_columns=allowed_columns,
+        allowed_tables=allowed_tables,
+        allowed_functions=allowed_functions,
+        metric_asts=metric_asts,
+    )
     for metric in plan.metrics:
         expression = plan.aggregations.get(metric.id)
         if not expression:
             raise SQLCompilerError(f"指标缺少聚合定义: {metric.id}")
-        select_parts.append(f"{_compile_expression(expression, allowed_columns, allowed_tables)} AS {_quote(metric.id)}")
+        try:
+            if metric.id in metric_asts:
+                compiled_expression = compile_metric_ast(metric.id, metric_asts[metric.id], expression_context)
+            else:
+                compiled_expression = _compile_legacy_expression(expression, expression_context)
+        except ExpressionASTError as exc:
+            raise SQLCompilerError(str(exc)) from exc
+        select_parts.append(f"{compiled_expression} AS {_quote(metric.id)}")
         allowed_columns.add(metric.id)
-        if metric.id == "order_count":
-            allowed_columns.add("fact_order.order_id")
-        elif metric.id == "paid_amount":
-            allowed_columns.add("fact_order.order_amount")
-        elif metric.id == "product_quantity":
-            allowed_columns.add("fact_order.order_quantity")
-        elif metric.id == "average_quantity_per_order":
-            allowed_columns.update({"fact_order.order_quantity", "fact_order.order_id"})
 
     join_parts: list[str] = []
     joined_tables = {plan.fact_table}
@@ -118,13 +138,20 @@ def compile_query(
 
     if plan.time:
         allowed_tables.add(plan.time.table)
-        for condition in plan.time.conditions:
-            table, column = _split_reference(condition.field)
-            allowed_columns.add(condition.field)
-            placeholder = f"p{parameter_index}"
-            parameter_index += 1
-            where_parts.append(_filter_sql(table, column, condition.operator, placeholder))
-            params[placeholder] = condition.value
+        groups = plan.time.condition_groups or (plan.time.conditions,)
+        group_sql = []
+        for group in groups:
+            conditions_sql = []
+            for condition in group:
+                table, column = _split_reference(condition.field)
+                allowed_columns.add(condition.field)
+                placeholder = f"p{parameter_index}"
+                parameter_index += 1
+                conditions_sql.append(_filter_sql(table, column, condition.operator, placeholder))
+                params[placeholder] = condition.value
+            group_sql.append(" AND ".join(conditions_sql))
+        if group_sql:
+            where_parts.append("(" + " OR ".join(f"({item})" for item in group_sql) + ")")
 
     sql = (
         f"SELECT /*+ MAX_EXECUTION_TIME({max_execution_time_ms}) */ "
@@ -163,24 +190,11 @@ def compile_query(
     )
 
 
-def _compile_expression(expression: str, allowed_columns: set[str], allowed_tables: set[str]) -> str:
-    # 表达式来自已经通过阶段一静态校验的语义配置；这里仍只允许本期
-    # 已确认的四个指标表达式，避免将任意配置文本当作SQL执行。
-    allowed = {
-        "SUM(fact_order.order_amount)": "SUM(fact_order.order_amount)",
-        "SUM(fact_order.order_quantity)": "SUM(fact_order.order_quantity)",
-        "COUNT(DISTINCT fact_order.order_id)": "COUNT(DISTINCT fact_order.order_id)",
-        "SUM(fact_order.order_quantity) / NULLIF(COUNT(DISTINCT fact_order.order_id), 0)": (
-            "SUM(fact_order.order_quantity) / NULLIF(COUNT(DISTINCT fact_order.order_id), 0)"
-        ),
-    }
-    if expression not in allowed:
-        raise SQLCompilerError(f"不允许的指标表达式: {expression}")
-    for reference in ("fact_order.order_amount", "fact_order.order_quantity", "fact_order.order_id"):
-        if reference in expression:
-            allowed_tables.add(reference.split(".")[0])
-            allowed_columns.add(reference)
-    return allowed[expression]
+def _compile_legacy_expression(expression: str, context: ExpressionCompileContext) -> str:
+    try:
+        return compile_metric_ast("__legacy__", legacy_expression_to_ast(expression), context)
+    except ExpressionASTError as exc:
+        raise SQLCompilerError(str(exc)) from exc
 
 
 def _filter_sql(table: str, column: str, operator: str, placeholder: str) -> str:
