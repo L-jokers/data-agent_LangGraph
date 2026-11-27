@@ -59,11 +59,16 @@ class TrustedQueryChain:
         if semantic_version_id != self.snapshot.version_id:
             raise TrustedReplayError("SEMANTIC_VERSION_CHANGED")
 
+        """
+        重新校验处理用户意图
+        （不重新进行意图解析，仍使用旧意图），当前只支持不改变查询语义的结构化修正    
+        """
         reparsed = QueryIntent.from_payload(_intent_payload(intent))
         if reparsed.status != QueryIntentStatus.READY:
             raise TrustedReplayError("INTENT_NOT_READY")
         events = ["intent_validation"]
 
+        # 重新执行查询计划生成以及重新校验查询计划
         plan = build_query_plan(self.snapshot, reparsed, resolved_time)
         events.append("plan_generation")
         plan = validate_query_plan(plan, snapshot=self.snapshot, version_id=semantic_version_id)

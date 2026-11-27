@@ -19,7 +19,7 @@ async def generate_sql(state: DataAgentState, runtime: Runtime[DataAgentContext]
             timeout_seconds=limits.timeout_seconds,
             max_execution_time_ms=limits.max_execution_time_ms,
         )
-        writer({"type": "progress", "step": "生成SQL", "status": "success"})
+        writer({"type": "progress", "step": "生成SQL", "status": "success", "compiled": compiled})
         logger.info("deterministic SQL compiled")
         return {"compiled_query": compiled, "sql": compiled.sql, "error": None}
     except (SQLCompilerError, KeyError) as exc:

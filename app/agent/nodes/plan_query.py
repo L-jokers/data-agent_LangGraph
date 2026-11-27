@@ -23,6 +23,7 @@ async def plan_query(state: DataAgentState, runtime: Runtime[DataAgentContext]):
             "type": "progress",
             "step": "生成查询计划",
             "status": "success",
+            "query_plan": query_plan
         })
         return {"query_plan": query_plan}
     except (QueryPlanError, ValueError) as exc:

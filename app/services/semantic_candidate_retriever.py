@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Mapping, Protocol, Sequence
 
+from app.core.log import logger
 from app.services.semantic_model_snapshot import SemanticModelSnapshot, SemanticModelSnapshotLoader
 
 
@@ -124,6 +125,7 @@ class SemanticCandidateRetriever:
         # 符合向量查询条件才能走向量查询_vector_search_snapshot
         fuzzy_enabled = self.config.enable_fuzzy_mapping if allow_fuzzy is None else allow_fuzzy
         vector: list[SemanticCandidate] = []
+        # 符合向量查询条件：开启语义查询开关fuzzy_enabled，同时精确匹配没有成功not any(item.status == "exact")
         if fuzzy_enabled and not any(item.status == "exact" for item in exact.values()):
             try:
                 vector = await self._vector_search_snapshot(snapshot, query, semantic_types, dimension_id)
@@ -171,6 +173,10 @@ class SemanticCandidateRetriever:
             return CandidateResolution("clarification", tuple(candidates[:2]), "冷启动仅允许唯一精确映射")
         if len(candidates) == 1:
             return CandidateResolution("clarification", tuple(candidates), "非精确候选缺少 Top2，不能自动映射")
+        logger.info(
+            f"第一候选名称：{candidates[0].display_name}，第一候选分数：{candidates[0].score:.4f}；"
+            f"第二候选名称：{candidates[1].display_name}，第二候选分数：{candidates[1].score:.4f}"
+        )
         if candidates[0].score < self.config.auto_score_threshold or candidates[0].score - candidates[1].score < self.config.auto_margin_threshold:
             return CandidateResolution("clarification", tuple(candidates[:2]), "候选分数或分差不足")
         return CandidateResolution("auto", (candidates[0],))

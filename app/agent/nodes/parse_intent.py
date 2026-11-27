@@ -24,7 +24,7 @@ async def parse_intent(state: DataAgentState, runtime: Runtime[DataAgentContext]
         intent = QueryIntent.from_payload(payload)
         stage = "time_completeness"
         validate_time_extraction(state["query"], intent)
-        writer({"type": "progress", "step": "解析结构化意图", "status": "success"})
+        writer({"type": "progress", "step": "解析结构化意图", "status": "success", "response" : response,"intent": intent})
         return {"query_intent": intent}
     except (QueryIntentParseError, LLMOutputParseError, ValueError, TypeError) as exc:
         code = getattr(exc, "code", "INVALID_SCHEMA")

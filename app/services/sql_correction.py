@@ -23,7 +23,7 @@ class CorrectionRun:
 
 
 def determine_correction(intent: QueryIntent, *, attempt: int) -> CorrectionDecision:
-    """只规范明确的排序枚举，不改变指标、时间、过滤或粒度语义。"""
+    """只规范明确的排序枚举（统一规范为小写排序方向），不改变指标、时间、过滤或粒度语义。"""
     if attempt >= 1:
         return CorrectionDecision(False, reason="CORRECTION_LIMIT_REACHED")
     if intent.status != QueryIntentStatus.READY:

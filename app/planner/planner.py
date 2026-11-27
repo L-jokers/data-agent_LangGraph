@@ -21,14 +21,14 @@ from app.planner.models import (
     TimePlan,
 )
 from app.services.metric_dependency_validator import validate_metric_dependencies
-
+from app.services.semantic_model_snapshot import SemanticModelSnapshot
 
 SUPPORTED_FILTER_OPERATORS = {"eq", "in", "gte", "lte", "contains"}
 MAX_LIMIT = 1000
 
 
 def build_query_plan(
-    config: MetaConfig | Any,
+    config: SemanticModelSnapshot | Any,
     intent: QueryIntent,
     resolved_time: dict[str, Any] | None = None,
 ) -> QueryPlan:
